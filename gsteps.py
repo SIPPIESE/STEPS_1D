@@ -2,7 +2,7 @@ import numpy as np
 import subprocess
 import glob
 import time
-import pandas
+import scipy.optimize
 
 class stepsPeak:
     def __init__ (self):
@@ -83,12 +83,12 @@ class stepsPeak:
 
         if indbeg < 1:
             indbeg = 1
-        indicies = self.stdBaseline(halfsignal[indbeg: indend], BLMP)
+        indicies = self.__stdBaseline(halfsignal[indbeg: indend], BLMP)
         indicies = indicies + indbeg - 1
         return np.asarray(indicies)
 
 
-    def stdBaseline(self, signal, baseline_multiplier):
+    def __stdBaseline(signal, baseline_multiplier):
         # Finds peaks that exceeds a baseline in all entries of signal.
         # The baseline is proportional to standard deviation by coefficient baseline_multiplier.
         indicies = []
@@ -115,32 +115,37 @@ class stepsPeak:
         return indicies
     
     def gsteps(self, x0, k0):
-        N = np.size(x0)
+        length_x0 = np.size(x0)
 
         # get initial values by ipDFT
-        n = np.arange(0, N)
-        hannwindow = np.hanning(N + 1)[0: -1]  # matlab periodic hann
-        x = np.multiply(x0, hannwindow)
+        index_range = np.arange(0, length_x0)
+        periodic_hann_window = np.hanning(length_x0 + 1)[0: -1]  # matlab periodic hann
+        x_windowed = np.multiply(x0, periodic_hann_window)
         M = np.size(k0, 0)
         X1 = np.zeros(1, M)
-        coeff_common_1 = -1j * 2 * np.pi * n
-        X_est_0 = np.matmul(x, np.exp(np.matmul(coeff_common_1, k0) / N))
+        coeff_common_1 = -1j * 2 * np.pi * index_range
+        X_est_0 = np.matmul(x_windowed, np.exp(np.matmul(coeff_common_1, k0) / length_x0))
         X1 = X_est_0
-        X_est_l = np.matmul(x, np.exp(np.matmul(coeff_common_1, (k0 - 1)) / N))
-        X_est_u = np.matmul(x, np.exp(np.matmul(coeff_common_1, (k0 + 1)) / N))
+        X_est_l = np.matmul(x_windowed, np.exp(np.matmul(coeff_common_1, (k0 - 1)) / length_x0))
+        X_est_u = np.matmul(x_windowed, np.exp(np.matmul(coeff_common_1, (k0 + 1)) / length_x0))
         Mag0 = np.abs(X_est_0)
         Magl = np.abs(X_est_l)
         Magu = np.abs(X_est_u)
         delta = np.divide(2 * (Magu - Magl), (Magu + 2 * Mag0 + Magl))
         k_ini = k0 + delta
-        W_d_en1 = np.multiply(np.divide(2*np.sin(np.pi*delta), np.sin(np.pi*delta/N)), np.exp(1j*np.pi*(N-1)/N*delta))
-        W_d_en2 = np.multiply(np.divide(np.sin(np.pi*(1-delta)), np.sin(np.pi*(1-delta)/N)), np.exp(-1j*np.pi*(N-1)/N*(1-delta)))
-        W_d_en3 = np.multiply(np.divide(np.sin(np.pi*(1+delta)), np.sin(np.pi*(1+delta)/N)), np.exp(1j*np.pi*(N-1)/N*(1+delta)))
+        W_d_en1 = np.multiply(np.divide(2*np.sin(np.pi*delta), np.sin(np.pi*delta/length_x0)), np.exp(1j*np.pi*(length_x0-1)/length_x0*delta))
+        W_d_en2 = np.multiply(np.divide(np.sin(np.pi*(1-delta)), np.sin(np.pi*(1-delta)/length_x0)), np.exp(-1j*np.pi*(length_x0-1)/length_x0*(1-delta)))
+        W_d_en3 = np.multiply(np.divide(np.sin(np.pi*(1+delta)), np.sin(np.pi*(1+delta)/length_x0)), np.exp(1j*np.pi*(length_x0-1)/length_x0*(1+delta)))
         W_d = np.abs(W_d_en1 - W_d_en2 - W_d_en3)
+
+        print(W_d_en1)
+        print(W_d_en2)
+        print(W_d_en3)
+        print(W_d)
 
         for index in np.arange(np.size(W_d)):  # obliterate all 0
             if W_d[index] == 0:
-                W_d[index] = 2 * N
+                W_d[index] = 2 * length_x0
     
         A_ini = np.divide(8*abs(X_est_0), (W_d))
         row_ones = np.ones(M,1)
@@ -153,23 +158,22 @@ class stepsPeak:
             coef2 = ((np.floor(k_ini1)+1)/2)/(k_ini1)
         else:
             coef2 = (np.floor(k_ini1)/2)/(k_ini1)
-        # % coef2 = floor(k_ini1)/k_ini1;
-        D1 = 1
-        D2 = np.round(N*coef2)/N
-        N1 = np.round(D1*N)
-        N2 = np.round(D2*N)
-        if np.mod(N2,2) != 0:
-            N2 = N2 - 1
-            D2 = N2 / N
-        ns1 = np.arange(-(N1-1)/2, (N1-1)/2 + 1)
-        x1 = x0[:N1]
-        X1 = np.matmul(x1, np.exp(-1j*2*np.pi/N1*np.matrix.H(ns1)*D1*k_ini))
+        # coef2 = floor(k_ini1)/k_ini1;
+        Ratio_1 = 1
+        Ratio_2 = np.round(length_x0*coef2)/length_x0
+        Length_1 = np.round(Ratio_1*length_x0)
+        Length_2 = np.round(Ratio_2*length_x0)
+        if np.mod(Length_2,2) != 0:
+            Length_2 = Length_2 - 1
+            Ratio_2 = Length_2 / length_x0
+        ns1 = np.arange(-(Length_1-1)/2, (Length_1-1)/2 + 1)
+        x1 = x0[:Length_1]
+        X1 = np.matmul(x1, np.exp(-1j*2*np.pi/Length_1*np.matrix.H(ns1)*Ratio_1*k_ini))
         phi_ini = np.angle(X1)
         X1 = np.transpose(X1)
-        ns2 = np.arange(-(N2-1)/2, (N2-1)/2 + 1)
-        x2 = x0[np.round(N*(1-D2)) :]
-        X2 = np.matmul(x2, np.exp(-1j * 2 * np.pi / N2 * np.matrix.H(ns2) * D2 * k_ini))
-        X2 = np.transpose(X2)
+        ns2 = np.arange(-(Length_2-1)/2, (Length_2-1)/2 + 1)
+        x2 = x0[np.round(length_x0*(1-Ratio_2)) :]
+        X2 = np.transpose(np.matmul(x2, np.exp(-1j * 2 * np.pi / Length_2 * np.matrix.H(ns2) * Ratio_2 * k_ini)))
         t0 = np.transpose(np.array([k_ini, A_ini, phi_ini]))
 
         # solve nonlinear equations
@@ -186,17 +190,17 @@ class stepsPeak:
             function F = nlEqu(t)
                     f_mat = col_ones*t(1, :);
                     phase1 = col_ones*t(3, :);
-                    phase2 = phase1+pi*f_mat*(1-D2);
+                    phase2 = phase1+pi*f_mat*(1-Ratio_2);
                     A = t(2, :)';
                     % equations
-                    a1 = sin(D1*pi*(k_ini_mat-f_mat))./sin(pi*(k_ini_mat-f_mat)/N);
-                    a1(k_ini_mat==f_mat) = N1;
-                    b1 = sin(D1*pi*(k_ini_mat+f_mat))./sin(pi*(k_ini_mat+f_mat)/N);
+                    a1 = sin(Ratio_1*pi*(k_ini_mat-f_mat))./sin(pi*(k_ini_mat-f_mat)/length_x0);
+                    a1(k_ini_mat==f_mat) = Length_1;
+                    b1 = sin(Ratio_1*pi*(k_ini_mat+f_mat))./sin(pi*(k_ini_mat+f_mat)/length_x0);
                     Re1 = (a1.*cos(phase1)+b1.*cos(phase1))*A;
                     Im1 = (a1.*sin(phase1)-b1.*sin(phase1))*A;
-                    a2 = sin(D2*pi*(k_ini_mat-f_mat))./sin(pi*(k_ini_mat-f_mat)/N);
-                    a2(k_ini_mat==f_mat) = N2;
-                    b2 = sin(D2*pi*(k_ini_mat+f_mat))./sin(pi*(k_ini_mat+f_mat)/N);
+                    a2 = sin(Ratio_2*pi*(k_ini_mat-f_mat))./sin(pi*(k_ini_mat-f_mat)/length_x0);
+                    a2(k_ini_mat==f_mat) = Length_2;
+                    b2 = sin(Ratio_2*pi*(k_ini_mat+f_mat))./sin(pi*(k_ini_mat+f_mat)/length_x0);
                     Re2 = (a2.*cos(phase2)+b2.*cos(phase2))*A;
                     Im2 = (a2.*sin(phase2)-b2.*sin(phase2))*A;
                     F = [Re1-2*real(X1);
